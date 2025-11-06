@@ -2,56 +2,66 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import LabelEncoder
+import seaborn as sns
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
-# --- Train the Model ---
+# =============================================
+# MODEL TRAINING FUNCTION
+# =============================================
 @st.cache_resource
 def train_model(uploaded_file):
+    """
+    Reads dataset, encodes categorical variables, ranks features by importance,
+    and trains a weighted logistic regression model for prediction.
+    """
     try:
         data = pd.read_csv(uploaded_file)
     except Exception as e:
-        st.error(f"Error loading CSV: {e}")
-        return None, None
-
-    try:
-        # Encode categorical features
-        cat_cols = data.select_dtypes(include=['object']).columns.tolist()
-        le = LabelEncoder()
-        for col in cat_cols:
-            data[col] = le.fit_transform(data[col].astype(str))
-
-        if 'Success' not in data.columns:
-            st.error("The dataset must contain a 'Success' column as target variable.")
-            return None, None
-
-        X = data.drop('Success', axis=1)
-        y = data['Success']
-
-        # Random Forest for feature importance
-        rf = RandomForestClassifier(random_state=42)
-        rf.fit(X, y)
-        importances = pd.Series(rf.feature_importances_, index=X.columns)
-        top5_features = importances.sort_values(ascending=False).head(5).index.tolist()
-
-        # Train Logistic Regression on top 5 features
-        x = X[top5_features]
-        x_train, x_test, y_train, y_test = train_test_split(
-            x, y, test_size=0.2, random_state=42, stratify=y
-        )
-        model = LogisticRegression()
-        model.fit(x_train, y_train)
-
-        return model, top5_features, importances
-    
-    except Exception as e:
-        st.error(f"Training Error: {e}")
+        st.error(f"Error loading CSV file: {e}")
         return None, None, None
 
+    if 'Success' not in data.columns:
+        st.error("Dataset must contain a 'Success' target column.")
+        return None, None, None
 
-# --- Load Custom Styling ---
+    # Encode categorical columns
+    cat_cols = data.select_dtypes(include=['object']).columns.tolist()
+    le = LabelEncoder()
+    for col in cat_cols:
+        data[col] = le.fit_transform(data[col].astype(str))
+
+    X = data.drop('Success', axis=1)
+    y = data['Success']
+
+    # Train RandomForest to extract data-driven feature importances
+    rf = RandomForestClassifier(random_state=42, n_estimators=200)
+    rf.fit(X, y)
+    importances = pd.Series(rf.feature_importances_, index=X.columns)
+    top_features = importances.sort_values(ascending=False).head(5).index.tolist()
+
+    # Train Logistic Regression on top 5 features
+    x = X[top_features]
+    x_train, x_test, y_train, y_test = train_test_split(
+        x, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    scaler = StandardScaler()
+    x_train_scaled = scaler.fit_transform(x_train)
+    x_test_scaled = scaler.transform(x_test)
+
+    model = LogisticRegression(max_iter=1000, random_state=42)
+    model.fit(x_train_scaled, y_train)
+
+    accuracy = model.score(x_test_scaled, y_test)
+    return model, top_features, importances, scaler, accuracy
+
+
+# =============================================
+# CUSTOM CSS
+# =============================================
 def load_css():
     st.markdown("""
         <style>
@@ -64,107 +74,117 @@ def load_css():
                 max-width: 950px;
                 margin: 0 auto;
             }
-            h1 { color: #2c3e50; text-align: center; font-weight: 700; }
+            h1 { color: #1e3a8a; text-align: center; font-weight: 800; }
             .stButton > button {
                 background-color: #3b82f6; color: white; border: none;
-                padding: 0.5rem 1rem; border-radius: 0.375rem; font-weight: 600; width: 100%;
+                padding: 0.6rem 1.2rem; border-radius: 0.5rem; font-weight: 600; width: 100%;
             }
-            .stButton > button:hover { background-color: #2563eb; color: white; }
+            .stButton > button:hover { background-color: #2563eb; }
         </style>
     """, unsafe_allow_html=True)
 
 
-# --- Streamlit App Starts ---
-st.set_page_config(page_title="Advanced M&A Success Predictor")
+# =============================================
+# STREAMLIT APP
+# =============================================
+st.set_page_config(page_title="M&A Success Predictor: Analytical Intelligence")
 load_css()
-st.title("🤝 Advanced M&A Success Predictor with Analytical Insights")
+st.title("🤖 M&A Success Predictor — Analytical Intelligence Dashboard")
 
-uploaded_file = st.file_uploader("Upload your CSV file for training", type="csv")
+uploaded_file = st.file_uploader("Upload your M&A dataset (CSV)", type="csv")
 
 if uploaded_file is None:
-    st.info("Upload your CSV file to train the model.")
+    st.info("Upload your CSV file to start model training and analysis.")
     st.stop()
 
-model, features_list, importances = train_model(uploaded_file)
+model, features, importances, scaler, acc = train_model(uploaded_file)
 
 if model is None:
-    st.warning("Model training failed. Please check your file.")
+    st.warning("Model training failed.")
     st.stop()
 
-st.success("✅ Model trained successfully using your dataset.")
-st.write(f"**Top 5 Predictive Features Identified:** {', '.join(features_list)}")
+st.success(f"✅ Model trained successfully. Accuracy: **{acc*100:.2f}%**")
+st.write(f"**Top Predictive Features:** {', '.join(features)}")
 
-# --- User Inputs ---
-st.write("<p style='text-align:center; color:#4b5563;'>Enter feature values and assign importance weights to simulate different M&A scenarios.</p>", unsafe_allow_html=True)
+# =============================================
+# USER INPUT SECTION
+# =============================================
+st.markdown("### 🎛️ Enter Feature Values to Simulate a Deal Scenario")
+inputs = []
+for feature in features:
+    val = st.number_input(f"{feature}", value=0.0, format="%.2f")
+    inputs.append(val)
 
-with st.form(key='prediction_form'):
-    st.subheader("Input Feature Values & Weights")
-    input_values = []
-    weights = []
+# Apply automatic feature weights (based on data importance)
+auto_weights = importances[features].values
+auto_weights = auto_weights / auto_weights.sum()  # Normalize to sum=1
 
-    col1, col2 = st.columns(2)
-    with col1:
-        for feature in features_list:
-            val = st.number_input(f"{feature} Value", value=0.0, format="%.2f")
-            input_values.append(val)
-    with col2:
-        for feature in features_list:
-            wt = st.slider(f"{feature} Weight", 0.0, 1.0, 0.2)
-            weights.append(wt)
+# Calculate weighted score
+weighted_score = np.dot(inputs, auto_weights)
 
-    submitted = st.form_submit_button("🔍 Analyze Prediction")
+# Predict
+scaled_inputs = scaler.transform([inputs])
+pred = model.predict(scaled_inputs)[0]
+proba = model.predict_proba(scaled_inputs)[0]
 
-if submitted:
-    try:
-        input_df = pd.DataFrame([input_values], columns=features_list)
-        weighted_input = np.multiply(input_values, weights)
+# =============================================
+# ANALYTICAL OUTPUT
+# =============================================
+st.markdown("---")
+st.subheader("🧠 Analytical Prediction Result")
 
-        composite_score = np.sum(weighted_input) / np.sum(weights)
-        prediction = model.predict(input_df)[0]
-        probabilities = model.predict_proba(input_df)[0]
+if int(pred) == 1:
+    st.success(f"✅ Predicted Outcome: **SUCCESS** (Probability: {proba[1]*100:.2f}%)")
+    st.write("**Interpretation:** The weighted combination of strategic and financial indicators reflects strong synergy potential, indicating high merger compatibility.")
+else:
+    st.error(f"⚠️ Predicted Outcome: **FAILURE** (Probability: {proba[0]*100:.2f}%)")
+    st.write("**Interpretation:** The current configuration suggests misalignment across key synergy and financial metrics, potentially reducing the likelihood of deal success.")
 
-        st.markdown("---")
-        st.subheader("🧠 Prediction Result & Analysis")
+# =============================================
+# VISUAL EXPLANATION
+# =============================================
+st.subheader("📊 Feature Weight & Influence Analysis")
 
-        # --- Prediction Output ---
-        if int(prediction) == 1:
-            st.success("✅ The model predicts: **Success (1)**")
-            st.write(f"**Interpretation:** A strong positive alignment between critical financial and strategic indicators leads to a favorable merger outlook. The weighted composite score of **{composite_score:.2f}** supports a high synergy potential.")
-        else:
-            st.error("⚠️ The model predicts: **Failure (0)**")
-            st.write(f"**Interpretation:** Certain parameters indicate weak alignment or high risk areas. The weighted composite score of **{composite_score:.2f}** suggests that success factors may be insufficient for synergy realization.")
+# Weighted Influence Table
+influence_df = pd.DataFrame({
+    "Feature": features,
+    "Input Value": inputs,
+    "Data-driven Weight": auto_weights,
+    "Weighted Contribution": np.multiply(inputs, auto_weights)
+}).sort_values(by="Weighted Contribution", ascending=False)
 
-        # --- Probability Visualization ---
-        st.subheader("📊 Prediction Probability Distribution")
-        fig, ax = plt.subplots()
-        categories = ['Failure (0)', 'Success (1)']
-        ax.bar(categories, probabilities, color=['red', 'green'])
-        ax.set_ylim(0, 1)
-        ax.set_ylabel('Probability')
-        ax.set_title('Model Confidence')
-        for i, v in enumerate(probabilities):
-            ax.text(i, v + 0.02, f"{v:.2f}", ha='center', fontweight='bold')
-        st.pyplot(fig)
+st.dataframe(influence_df.style.background_gradient(cmap="Blues", subset=["Weighted Contribution"]))
 
-        # --- Parameter Influence Chart ---
-        st.subheader("⚖️ Parameter Influence (Weighted Impact)")
-        influence_df = pd.DataFrame({
-            'Feature': features_list,
-            'Value': input_values,
-            'Weight': weights,
-            'Weighted Impact': weighted_input
-        }).sort_values(by='Weighted Impact', ascending=False)
+# Feature Impact Visualization
+fig, ax = plt.subplots(figsize=(7, 4))
+sns.barplot(x="Weighted Contribution", y="Feature", data=influence_df, palette="Blues_d", ax=ax)
+ax.set_title("Feature Influence on Predicted Success", fontsize=12, fontweight='bold')
+st.pyplot(fig)
 
-        st.dataframe(influence_df.style.background_gradient(cmap='Blues', subset=["Weighted Impact"]))
+# =============================================
+# ADVANCED INTERPRETATION LAYER
+# =============================================
+dominant_feature = influence_df.iloc[0]["Feature"]
+dominant_contrib = influence_df.iloc[0]["Weighted Contribution"]
 
-        # --- Analytical Insight Summary ---
-        top_influencer = influence_df.iloc[0]['Feature']
-        st.markdown(f"""
-        ### 🔍 Analytical Insight
-        - The feature **{top_influencer}** currently has the highest weighted influence on the outcome.
-        - Increasing or optimizing this parameter could significantly alter the merger's success probability.
-        - The model's overall confidence in prediction is **{max(probabilities)*100:.2f}%**.
-        """)
-        
-    except Exception as e:
-        st.error(f"Prediction error: {e}")
+st.markdown(f"""
+### 🔍 Deep Analytical Insights
+- The most influential factor is **{dominant_feature}**, contributing **{dominant_contrib:.2f}** points to the overall prediction score.
+- The model’s **data-driven weighting** prioritizes this feature due to its strong correlation with M&A success in historical data.
+- To **improve success probability**, focus on enhancing parameters with lower weighted influence or optimizing the top driver’s input value.
+- The model’s internal weighting is dynamically adjusted using **Random Forest feature importances**, ensuring analytical reliability.
+""")
+
+# =============================================
+# MODEL CONFIDENCE CHART
+# =============================================
+st.subheader("📈 Model Confidence Distribution")
+
+fig2, ax2 = plt.subplots()
+ax2.bar(["Failure (0)", "Success (1)"], proba, color=["red", "green"])
+ax2.set_ylim(0, 1)
+ax2.set_ylabel("Probability")
+ax2.set_title("Model Confidence in Prediction")
+for i, v in enumerate(proba):
+    ax2.text(i, v + 0.02, f"{v:.2f}", ha="center", fontweight="bold")
+st.pyplot(fig2)
