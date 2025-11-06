@@ -1,11 +1,6 @@
-streamlit
-numpy
-cython
 pandas
-plotly
-statsmodels
-pmdarima
-reportlab
-kaleido
-joblib
-
+numpy
+streamlit
+matplotlib
+seaborn
+scikit-learn
